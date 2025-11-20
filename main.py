@@ -647,22 +647,22 @@
             <div class="section-title" data-ar="المميزات" data-en="Features">المميزات</div>
             <div class="feature-grid">
                 <div class="feature-card">
-                    <div class="feature-icon">⚡</div>
+                    <div class="feature-icon">[FAST]</div>
                     <div class="feature-title" data-ar="سرعة فائقة" data-en="Ultra Fast">سرعة فائقة</div>
                     <div class="feature-desc" data-ar="معالجة متعددة الثريدات" data-en="Multi-threaded processing">معالجة متعددة الثريدات</div>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🔒</div>
+                    <div class="feature-icon">[LOCK]</div>
                     <div class="feature-title" data-ar="آمن ومستقر" data-en="Safe & Stable">آمن ومستقر</div>
                     <div class="feature-desc" data-ar="حماية من الحظر" data-en="Block protection">حماية من الحظر</div>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">📊</div>
+                    <div class="feature-icon">[STATS]</div>
                     <div class="feature-title" data-ar="احصائيات مباشرة" data-en="Live Stats">احصائيات مباشرة</div>
                     <div class="feature-desc" data-ar="متابعة لحظية" data-en="Real-time tracking">متابعة لحظية</div>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🔄</div>
+                    <div class="feature-icon">[SYNC]</div>
                     <div class="feature-title" data-ar="حساب احتياطي" data-en="Backup Account">حساب احتياطي</div>
                     <div class="feature-desc" data-ar="زيادة فرص النجاح" data-en="Higher success rate">زيادة فرص النجاح</div>
                 </div>
@@ -985,3 +985,6 @@
                 console.error('Webhook error:', error);
             }
         }
+    </script>
+</body>
+</html>
