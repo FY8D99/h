@@ -625,8 +625,8 @@
             <div class="section-title" data-ar="طريقة الاستخدام" data-en="How to Use">طريقة الاستخدام</div>
             <div class="about-content">
                 <ul>
-                    <li data-ar="ادخل sessionid للحساب الرئيسي (Main)" data-en="Enter the sessionid for the main account">ادخل sessionid للحساب الرئيسي (Main)</li>
-                    <li data-ar="ادخل sessionid للحساب المستهدف (Target)" data-en="Enter the sessionid for the target account">ادخل sessionid للحساب المستهدف (Target)</li>
+                    <li data-ar="ادخل sessionid للحساب الي تبي تنقل له (Main)" data-en="Enter the sessionid for the main account">ادخل sessionid للحساب الرئيسي (Main)</li>
+                    <li data-ar="ادخل sessionid للحساب الي فيه اليوزر  (Target) " data-en="Enter the sessionid for the target account">ادخل sessionid للحساب المستهدف (Target)</li>
                     <li data-ar="ادخل sessionid للحساب الاحتياطي (اختياري)" data-en="Enter the sessionid for the backup account (optional)">ادخل sessionid للحساب الاحتياطي (اختياري)</li>
                     <li data-ar="اضغط على 'فحص الحسابات' للتحقق" data-en="Click 'Check Accounts' to verify">اضغط على "فحص الحسابات" للتحقق</li>
                     <li data-ar="اضغط على 'بدء النقل' لبدء العملية" data-en="Click 'Start Swap' to begin">اضغط على "بدء النقل" لبدء العملية</li>
