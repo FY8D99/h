@@ -1,27 +1,3 @@
-# Telegram Bot
-pyTelegramBotAPI==4.14.0
-
-# HTTP Requests
-requests==2.31.0
-
-# Web Framework
 Flask==3.0.0
-Werkzeug==3.0.1
-
-# Additional Dependencies
-urllib3==2.1.0
-certifi==2023.11.17
-charset-normalizer==3.3.2
-idna==3.6
-
-# Threading support (built-in but included for compatibility)
-# No additional package needed - uses Python's built-in threading
-
-# JSON support (built-in)
-# No additional package needed - uses Python's built-in json
-
-# Base64 support (built-in)
-# No additional package needed - uses Python's built-in base64
-
-# DateTime support (built-in)
-# No additional package needed - uses Python's built-in datetime
+flask-cors==4.0.0
+gunicorn==21.2.0
