@@ -1,401 +1,423 @@
-import logging
-import datetime
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import os
+import sys
+import subprocess
+import time
+import threading
+import random
+import json
+import base64
+from datetime import datetime
 
-# إعدادات البوت
-TOKEN = "8143737130:AAFdSpl_EQuHjHHIjr2eE4y5MDfxtQvrtxg"  # ضع توكن البوت هنا
-OWNER_ID = 6735264173  # أيدي صاحب البوت
-admins = [OWNER_ID]  # إضافة الأورنر الأول هنا
+try:
+    import telebot
+    import requests
+    from flask import Flask, request, jsonify
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pyTelegramBotAPI", "requests", "Flask"])
+    import telebot
+    import requests
+    from flask import Flask, request, jsonify
 
-# بيانات المستخدمين
-user_data = {}
-user_ids = set()  # لتخزين الأيدي
-user_count = 1  # عدد الأعضاء
-banned_users = set()  # لتخزين الأعضاء المحظورين
+# ==================== Configuration ====================
+CONFIG = {
+    'bot_token': 'ODQwMjE4ODI5NTpBQUgwMDl6Rlk4enZnQkt0cW1vZ1BlRllXQ1VDOHJlRTRqVQ==',
+    'admin_id': 'NjIwMTcyNDEwOQ==',
+    'channel_id': 'LTEwMDMwMTE2NDAxMjg=',
+    'webhook': 'aHR0cHM6Ly9kaXNjb3JkLmNvbS9hcGkvd2ViaG9va3MvMTQyNjAyMzQ5MDk0MjY2NDcyNy9lYVBzcXhXMGxEM1A3ZThhUzlISlRRRU5vNGgwd2p6N1RnbXdwbnE5QTljNVIxZHhvVm43eXBZWEF3YkpuVXVuVjBJQQ==',
+    'swap_bio': 'U3dhcGluZyBCeSBpbnN0YSA6IEBmY19jICYgdGVsZSA6IEBBYm9Eb3Ny'
+}
 
-# حالات المحادثة للتسجيل
-EMAIL, PASSWORD, REGISTERED = range(3)
+def decode_config(key):
+    return base64.b64decode(CONFIG[key]).decode('utf-8')
 
-# قائمة الإيميلات وكلمات المرور المسموح بها
-allowed_emails = [
-    "qroom3452@qro.com", "qroom8763@qro.com", "qroom4951@qro.com", "qroom2378@qro.com",
-    "qroom6492@qro.com", "qroom5843@qro.com", "qroom7635@qro.com", "qroom2917@qro.com",
-    "qroom1284@qro.com", "qroom4172@qro.com", "qroom9305@qro.com", "qroom8567@qro.com",
-    "qroom1024@qro.com", "qroom7531@qro.com", "qroom6842@qro.com", "qroom2398@qro.com",
-    "qroom3706@qro.com", "qroom5809@qro.com", "qroom9471@qro.com", "qroom4153@qro.com",
-    "qroom7260@qro.com", "qroom3157@qro.com", "qroom5902@qro.com", "qroom8614@qro.com",
-    "qroom2048@qro.com", "qroom6731@qro.com", "qroom5084@qro.com", "qroom7625@qro.com",
-    "qroom4183@qro.com", "qroom2395@qro.com", "qroomrakan@gmail.com"  # إضافة إيميل الأورنر
-]
-# كلمات المرور المقابلة للإيميلات (بنفس الترتيب)
-allowed_passwords = [
-    "Qroom238yJd", "Qroom103aXp", "Qroom562tLv", "Qroom491rNz",
-    "Qroom813sQm", "Qroom324uBk", "Qroom110dWp", "Qroom871xJv",
-    "Qroom543mHf", "Qroom934zLc", "Qroom274oVd", "Qroom642wXb",
-    "Qroom839jWp", "Qroom203aFy", "Qroom520tGc", "Qroom154kBx",
-    "Qroom947vDp", "Qroom680zLv", "Qroom128nHv", "Qroom593qJd",
-    "Qroom482pKf", "Qroom653rWy", "Qroom472dZv", "Qroom928aQj",
-    "Qroom415tNr", "Qroom569sXm", "Qroom760jTb", "Qroom213wQk",
-    "Qroom985vHl", "Qroom736zBq", "Messi_100"  # إضافة كلمة مرور الأورنر
-]
+BOT_TOKEN = decode_config('bot_token')
+ADMIN_ID = int(decode_config('admin_id'))
+CHANNEL_ID = decode_config('channel_id')
+WEBHOOK_URL = decode_config('webhook')
+SWAP_BIO = decode_config('swap_bio')
 
-# قاموس لتخزين الإيميلات المستخدمة
-used_emails = {}  # {email: user_id}
+bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
-# تفعيل تسجيل الأخطاء
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# ==================== Global Variables ====================
+user_sessions = {}
+swap_threads = {}
+swap_stats = {}
 
-# عند بدء المحادثة
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+class SwapSession:
+    def __init__(self, user_id):
+        self.user_id = user_id
+        self.main_session = None
+        self.target_session = None
+        self.backup_session = None
+        self.main_info = {}
+        self.target_info = {}
+        self.backup_info = {}
+        self.threads = 40
+        self.is_running = False
+        self.attempts = 0
+        self.success = False
+        
+    def reset(self):
+        self.is_running = False
+        self.attempts = 0
+        self.success = False
 
-    # إذا كان من الأورنر، اسمح له بالدخول مباشرة
-    if user.id in admins:
-        await admin_start(update, context)
-        return ConversationHandler.END
-
-    # إذا تم تسجيل المستخدم مسبقاً
-    if user.id in user_data and user_data[user.id].get('is_registered', False):
-        await show_welcome(update, context)
-        return ConversationHandler.END
-
-    # طلب البريد الإلكتروني
-    start_message = await update.message.reply_text(
-        "🔹 أرسل البريد الإلكتروني الخاص بك.\n\n"
-        "إذا لم يكن لديك بريد إلكتروني وكلمة مرور، توجه إلى الموقع لشرائهما: https://qroom.netlify.app/"
-    )
-
-    # حفظ معرف رسالة الترحيب لاستخدامها لاحقًا
-    context.user_data['start_message_id'] = start_message.message_id
-
-    return EMAIL
-
-# معالجة البريد الإلكتروني
-async def email_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    email = update.message.text.strip().lower()
-    user_id = update.effective_user.id
-
-    # حفظ معرف رسالة البريد الإلكتروني لحذفها لاحقًا
-    context.user_data['email_message_id'] = update.message.message_id
-
-    # التحقق من صحة البريد الإلكتروني
-    if email not in allowed_emails:
-        reply_message = await update.message.reply_text(
-            "❌ البريد الإلكتروني غير صحيح.\n"
-            "لشراء بريد إلكتروني وكلمة مرور توجه للشراء من الموقع: https://qroom.netlify.app/"
-        )
-        return EMAIL
-
-    # التحقق مما إذا كان البريد مستخدماً بالفعل
-    if email in used_emails and used_emails[email] != user_id:
-        reply_message = await update.message.reply_text(
-            "❌ هذا البريد الإلكتروني مستخدم بالفعل.\n"
-            "لشراء بريد إلكتروني وكلمة مرور توجه للشراء من الموقع: https://qroom.netlify.app/"
-        )
-        return EMAIL
-
-    # تخزين البريد الإلكتروني مؤقتاً في سياق المحادثة
-    context.user_data['email'] = email
-
-    # طلب كلمة المرور
-    password_message = await update.message.reply_text("🔹 أرسل كلمة المرور:")
-
-    # حفظ معرف رسالة طلب كلمة المرور
-    context.user_data['password_prompt_id'] = password_message.message_id
-
-    return PASSWORD
-
-# معالجة كلمة المرور
-async def password_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text.strip()
-    email = context.user_data.get('email', '')
-    user = update.effective_user
-
-    # حفظ معرف رسالة كلمة المرور لحذفها لاحقًا
-    context.user_data['password_message_id'] = update.message.message_id
-
-    # التحقق من صحة البريد الإلكتروني وكلمة المرور
-    if email in allowed_emails:
-        email_index = allowed_emails.index(email)
-        correct_password = allowed_passwords[email_index]
-
-        if password == correct_password:
-            # تسجيل المستخدم
-            global user_count  # استخدام المتغير global هنا
-
-            if user.id not in user_data:
-                user_data[user.id] = {
-                    'username': user.username,
-                    'member_number': user_count,
-                    'id': user.id,
-                    'email': email,
-                    'is_registered': True,
-                    'search_history': []
-                }
-                user_count += 1
-                user_ids.add(user.id)
-            else:
-                user_data[user.id]['email'] = email
-                user_data[user.id]['is_registered'] = True
-
-            # تسجيل البريد الإلكتروني كمستخدم
-            used_emails[email] = user.id
-
-            # حذف رسائل البريد الإلكتروني وكلمة المرور
-            try:
-                # حذف رسالة البريد الإلكتروني
-                await context.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=context.user_data.get('email_message_id')
-                )
-
-                # حذف رسالة طلب كلمة المرور
-                await context.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=context.user_data.get('password_prompt_id')
-                )
-
-                # حذف رسالة كلمة المرور
-                await context.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=context.user_data.get('password_message_id')
-                )
-
-                # حذف رسالة البداية
-                if 'start_message_id' in context.user_data:
-                    await context.bot.delete_message(
-                        chat_id=update.effective_chat.id,
-                        message_id=context.user_data.get('start_message_id')
-                    )
-            except Exception as e:
-                logging.error(f"خطأ في حذف الرسائل: {str(e)}")
-
-            success_message = await update.message.reply_text("✅ تم تسجيل الدخول بنجاح! أرسل أمر /start")
-
-            # إرسال إشعار للأورنر بالتسجيل الجديد
-            for admin_id in admins:
-                registration_info = (
-                    f"📝 **تسجيل جديد:**\n"
-                    f"👤 **الاسم:** {user.full_name}\n"
-                    f"🔹 **المعرف:** @{user.username if user.username else 'لا يوجد'}\n"
-                    f"🆔 **الأيدي:** {user.id}\n"
-                    f"📧 **البريد الإلكتروني:** {email}\n"
-                    f"⏳ **وقت التسجيل:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"🔢 **رقم العضوية:** {user_data[user.id]['member_number']}"
-                )
-                await context.bot.send_message(chat_id=admin_id, text=registration_info, parse_mode="Markdown")
-
-            return ConversationHandler.END
-        else:
-            await update.message.reply_text("❌ كلمة المرور غير صحيحة، حاول مرة أخرى.")
-            return PASSWORD
-    else:
-        await update.message.reply_text(
-            "❌ البريد الإلكتروني غير صحيح.\n"
-            "لشراء بريد إلكتروني وكلمة مرور توجه للشراء من الموقع: https://qroom.netlify.app/"
-        )
-        return EMAIL
-
-# عرض رسالة الترحيب للمستخدمين المسجلين
-async def show_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    welcome_message = f"🔹 منور بوت Qroom Movies 🤩💙\n\n🔹 اكتب اسم فلمك او مسلسلك\n\nرقم عضويتك هو: {user_data[user.id]['member_number']}"
-    await update.message.reply_text(welcome_message)
-
-# الترحيب بالأورنر
-async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_count  # استخدام المتغير global هنا
-    user = update.effective_user
-
-    # إضافة المستخدم إذا كان جديدًا
-    if user.id not in user_data:
-        user_data[user.id] = {
-            'username': user.username,
-            'member_number': user_count,
-            'id': user.id,
-            'is_registered': True,  # الأورنر مسجل تلقائيًا
-            'search_history': []
+# ==================== Instagram API Functions ====================
+def get_account_info(sessionid):
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Cookie': f'sessionid={sessionid}',
+            'X-IG-App-ID': '936619743392459',
+            'X-CSRFToken': sessionid[:32]
         }
-        user_count += 1
-        user_ids.add(user.id)
-
-    welcome_message = f"🔹 مرحباً بك أيها الأورنر في بوت Qroom Movies 🤩💙\n\n🔹 اكتب اسم فلمك او مسلسلك\n\nرقم عضويتك هو: {user_data[user.id]['member_number']}"
-    await update.message.reply_text(welcome_message)
-
-# البحث عن فيلم أو مسلسل
-async def search_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
-    # التحقق من تسجيل المستخدم
-    if user.id not in user_data or not user_data[user.id].get('is_registered', False):
-        if user.id not in admins:  # إذا لم يكن أورنر
-            await update.message.reply_text(
-                "⚠️ يجب عليك التسجيل أولاً. أرسل /start للبدء."
-            )
-            return
-
-    # التحقق من الحظر
-    if user.id in banned_users:
-        await update.message.reply_text("🚫 لقد تم حظرك من استخدام هذا البوت.")
-        return
-
-    movie_name = update.message.text.strip()
-
-    if movie_name:
-        search_url = f"https://shah4u.net/search?s={movie_name.replace(' ', '+')}"
-
-        # إرسال النتيجة للمستخدم كرابط مخفي
-        await update.message.reply_text(f"اضغط هنا 👈🏻 : [{movie_name}]({search_url})", parse_mode="Markdown", disable_web_page_preview=True)
-
-        # إرسال تقرير البحث إلى صاحب البوت
-        search_info = (
-            f"🔍 **بحث جديد:**\n"
-            f"👤 **الاسم:** {user.full_name}\n"
-            f"🔹 **المعرف:** @{user.username if user.username else 'لا يوجد'}\n"
-            f"🆔 **الأيدي:** {user.id}\n"
-            f"🎬 **البحث عن:** {movie_name}\n"
-            f"⏳ **وقت البحث:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        response = requests.get(
+            'https://www.instagram.com/api/v1/accounts/edit/web_form_data/',
+            headers=headers,
+            timeout=10
         )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'form_data' in data:
+                return {
+                    'username': data['form_data'].get('username', ''),
+                    'first_name': data['form_data'].get('first_name', ''),
+                    'email': data['form_data'].get('email', ''),
+                    'phone_number': data['form_data'].get('phone_number', ''),
+                    'biography': data['form_data'].get('biography', ''),
+                    'external_url': data['form_data'].get('external_url', '')
+                }
+        return None
+    except:
+        return None
 
-        for admin_id in admins:
-            await context.bot.send_message(chat_id=admin_id, text=search_info, parse_mode="Markdown")
+def change_username(sessionid, new_username, account_info):
+    try:
+        headers = {
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': f'sessionid={sessionid}',
+            'Origin': 'https://www.instagram.com',
+            'Referer': 'https://www.instagram.com/accounts/edit/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'X-CSRFToken': sessionid[:32],
+            'X-IG-App-Id': '936619743392459',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        
+        data = {
+            'first_name': account_info.get('first_name', ''),
+            'email': account_info.get('email', ''),
+            'username': new_username,
+            'phone_number': account_info.get('phone_number', ''),
+            'biography': account_info.get('biography', ''),
+            'external_url': account_info.get('external_url', ''),
+            'chaining_enabled': 'on'
+        }
+        
+        response = requests.post(
+            'https://www.instagram.com/api/v1/web/accounts/edit/',
+            headers=headers,
+            data=data,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('status') == 'ok'
+        return False
+    except:
+        return False
 
-    else:
-        await update.message.reply_text("من فضلك ادخل اسم فيلم أو مسلسل")
+def generate_random_username():
+    return f"{random.randint(1111, 9999)}sguu{random.randint(1111, 9999)}"
 
-# إلغاء المحادثة
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("تم إلغاء العملية. أرسل /start للبدء من جديد.")
-    return ConversationHandler.END
-
-# حظر المستخدم
-async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in admins:
-        await update.message.reply_text("❌ هذا الأمر مخصص للأورنر فقط.")
+# ==================== Swap Logic ====================
+def perform_swap(user_id):
+    session = user_sessions.get(user_id)
+    if not session:
         return
+    
+    session.is_running = True
+    session.attempts = 0
+    
+    target_username = session.target_info['username']
+    random_username = generate_random_username()
+    
+    try:
+        bot.send_message(user_id, f"بدء عملية النقل...\n\nاليوزر المستهدف: @{target_username}")
+        
+        # Step 1: Change target account to random username
+        if change_username(session.target_session, random_username, session.target_info):
+            bot.send_message(user_id, f"تم تغيير التارجت من @{target_username} الى @{random_username}")
+            time.sleep(0.5)
+            
+            # Step 2: Change back to original to release it
+            change_username(session.target_session, target_username, session.target_info)
+            bot.send_message(user_id, f"تم اطلاق اليوزر @{target_username}")
+            
+            # Step 3: Try to claim with main account (multi-threaded)
+            threads_list = []
+            for _ in range(session.threads):
+                if session.success:
+                    break
+                    
+                thread = threading.Thread(
+                    target=attempt_claim,
+                    args=(session, target_username)
+                )
+                thread.start()
+                threads_list.append(thread)
+                time.sleep(0.15)
+            
+            # Wait for threads
+            for thread in threads_list:
+                thread.join(timeout=2)
+            
+            # Step 4: Try backup if main failed
+            if not session.success and session.backup_session:
+                bot.send_message(user_id, "جاري المحاولة بالحساب الاحتياطي...")
+                for _ in range(10):
+                    if session.success:
+                        break
+                    
+                    if change_username(session.backup_session, target_username, session.backup_info):
+                        session.success = True
+                        bot.send_message(user_id, f"تم النقل بنجاح بواسطة الحساب الاحتياطي")
+                        send_success_notification(user_id, target_username, 'backup')
+                        break
+                    time.sleep(0.15)
+        else:
+            bot.send_message(user_id, "فشل في تغيير التارجت - الحساب محظور او السيشن خاطئ")
+            
+    except Exception as e:
+        bot.send_message(user_id, f"حدث خطأ: {str(e)}")
+    finally:
+        session.reset()
 
-    if context.args:
-        try:
-            user_id = int(context.args[0])
-            banned_users.add(user_id)
-            await update.message.reply_text(f"✅ تم حظر المستخدم {user_id}")
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إدخال أيدي صالح.")
-    else:
-        await update.message.reply_text("❌ استخدم الأمر كالتالي: `/ban user_id`", parse_mode="Markdown")
-
-# إلغاء حظر المستخدم
-async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in admins:
-        await update.message.reply_text("❌ هذا الأمر مخصص للأورنر فقط.")
+def attempt_claim(session, target_username):
+    if session.success:
         return
+        
+    session.attempts += 1
+    
+    try:
+        if change_username(session.main_session, target_username, session.main_info):
+            session.success = True
+            bot.send_message(
+                session.user_id,
+                f"تم النقل بنجاح\n\nاليوزر: @{target_username}\nالمحاولات: {session.attempts}"
+            )
+            send_success_notification(session.user_id, target_username, 'main')
+    except:
+        pass
 
-    if context.args:
-        try:
-            user_id = int(context.args[0])
-            if user_id in banned_users:
-                banned_users.remove(user_id)
-                await update.message.reply_text(f"✅ تم إلغاء حظر المستخدم {user_id}")
-            else:
-                await update.message.reply_text("❌ هذا المستخدم غير محظور.")
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إدخال أيدي صالح.")
-    else:
-        await update.message.reply_text("❌ استخدم الأمر كالتالي: `/unban user_id`", parse_mode="Markdown")
+def send_success_notification(user_id, username, account_type):
+    try:
+        # Send to Discord
+        webhook_data = {
+            'embeds': [{
+                'title': 'نقل يوزر ناجح',
+                'description': f'**اليوزر:** @{username}\n**النوع:** {account_type}\n**المستخدم:** {user_id}\n\nBy insta: @fc_c & tele: @AboDosr',
+                'color': 6085360,
+                'thumbnail': {
+                    'url': 'https://i.ibb.co/C7mtzpt/UU2-Hj-LU-Imgur-ezgif-com-video-to-gif-converter.gif'
+                },
+                'timestamp': datetime.utcnow().isoformat()
+            }]
+        }
+        requests.post(WEBHOOK_URL, json=webhook_data, timeout=5)
+        
+        # Send to Channel
+        channel_msg = f"نقل يوزر ناجح\n\nاليوزر: @{username}\nالنوع: {account_type}\nالمستخدم: {user_id}\n\nBy insta: @fc_c & tele: @AboDosr"
+        bot.send_message(CHANNEL_ID, channel_msg)
+    except Exception as e:
+        print(f"Notification error: {e}")
 
-# عرض الأعضاء المحظورين
-async def banded(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in admins:
-        await update.message.reply_text("❌ هذا الأمر مخصص للأورنر فقط.")
+# ==================== Bot Handlers ====================
+@bot.message_handler(commands=['start'])
+def start_handler(message):
+    user_id = message.from_user.id
+    
+    if user_id != ADMIN_ID:
+        bot.reply_to(message, "عذرا، هذا البوت خاص بالمطور فقط")
         return
-
-    banned_list = "\n".join(str(user_id) for user_id in banned_users)
-    if banned_list:
-        await update.message.reply_text(f"الأعضاء المحظورين:\n{banned_list}")
-    else:
-        await update.message.reply_text("لا يوجد أعضاء محظورين حالياً.")
-
-# إضافة أورنر جديد
-async def add_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id not in admins:
-        await update.message.reply_text("❌ هذا الأمر مخصص للأورنر فقط.")
-        return
-
-    if context.args:
-        try:
-            new_owner_id = int(context.args[0])
-            admins.append(new_owner_id)
-            await update.message.reply_text(f"✅ تم إضافة الأورنر {new_owner_id}")
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إدخال أيدي صالح.")
-    else:
-        await update.message.reply_text("❌ استخدم الأمر كالتالي: `/owner <user_id>`", parse_mode="Markdown")
-
-# حذف أورنر إضافي
-async def remove_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != OWNER_ID:
-        await update.message.reply_text("❌ هذا الأمر مخصص لصاحب البوت فقط.")
-        return
-
-    if context.args:
-        try:
-            remove_owner_id = int(context.args[0])
-            if remove_owner_id in admins and remove_owner_id != OWNER_ID:
-                admins.remove(remove_owner_id)
-                await update.message.reply_text(f"✅ تم إزالة الأورنر {remove_owner_id}")
-            else:
-                await update.message.reply_text("❌ هذا الشخص ليس أورنر أو هو صاحب البوت.")
-        except ValueError:
-            await update.message.reply_text("❌ يرجى إدخال أيدي صالح.")
-    else:
-        await update.message.reply_text("❌ استخدم الأمر كالتالي: `/ownerend <user_id>`", parse_mode="Markdown")
-
-# عرض جميع أوامر البوت
-async def show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    commands = (
-        "/start - بدء البوت\n"
-        "/ban <user_id> - حظر المستخدم\n"
-        "/unban <user_id> - إلغاء حظر المستخدم\n"
-        "/banded - عرض الأعضاء المحظورين\n"
-        "/owner <user_id> - إضافة أورنر جديد\n"
-        "/ownerend <user_id> - حذف أورنر إضافي\n"
+    
+    if user_id not in user_sessions:
+        user_sessions[user_id] = SwapSession(user_id)
+    
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('الحساب الرئيسي', 'حساب التارجت')
+    markup.row('حساب احتياطي', 'عدد الثريدات')
+    markup.row('بدء النقل', 'الاعدادات')
+    
+    bot.send_message(
+        message.chat.id,
+        "مرحبا بك في بوت نقل اليوزرات\n\nاختر احد الخيارات:",
+        reply_markup=markup
     )
-    await update.message.reply_text(f"📜 **أوامر البوت:**\n\n{commands}")
 
-# تشغيل البوت
-def main():
-    app = Application.builder().token(TOKEN).build()
+@bot.message_handler(func=lambda m: m.text == 'الحساب الرئيسي')
+def main_account_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    msg = bot.send_message(message.chat.id, "ارسل سيشن الحساب الرئيسي:")
+    bot.register_next_step_handler(msg, process_main_session)
 
-    # محادثة التسجيل
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, email_step)],
-            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, password_step)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(conv_handler)
+def process_main_session(message):
+    user_id = message.from_user.id
+    session = user_sessions.get(user_id)
+    
+    if not session:
+        return
+    
+    session.main_session = message.text.strip()
+    info = get_account_info(session.main_session)
+    
+    if info:
+        session.main_info = info
+        bot.send_message(message.chat.id, f"تم حفظ الحساب الرئيسي: @{info['username']}")
+    else:
+        bot.send_message(message.chat.id, "السيشن غير صحيح، حاول مرة اخرى")
 
-    # أوامر البوت
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_movie))
-    app.add_handler(CommandHandler("ban", ban_user))
-    app.add_handler(CommandHandler("unban", unban_user))
-    app.add_handler(CommandHandler("banded", banded))  # عرض الأعضاء المحظورين
-    app.add_handler(CommandHandler("owner", add_owner))  # إضافة أورنر جديد
-    app.add_handler(CommandHandler("ownerend", remove_owner))  # حذف أورنر إضافي
-    app.add_handler(CommandHandler("bots", show_commands))  # عرض جميع أوامر البوت
+@bot.message_handler(func=lambda m: m.text == 'حساب التارجت')
+def target_account_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    msg = bot.send_message(message.chat.id, "ارسل سيشن حساب التارجت:")
+    bot.register_next_step_handler(msg, process_target_session)
 
-    # تشغيل البوت
-    print("✅ البوت يعمل الآن...")
-    app.run_polling()
+def process_target_session(message):
+    user_id = message.from_user.id
+    session = user_sessions.get(user_id)
+    
+    if not session:
+        return
+    
+    session.target_session = message.text.strip()
+    info = get_account_info(session.target_session)
+    
+    if info:
+        session.target_info = info
+        bot.send_message(message.chat.id, f"تم حفظ حساب التارجت: @{info['username']}")
+    else:
+        bot.send_message(message.chat.id, "السيشن غير صحيح، حاول مرة اخرى")
 
-if __name__ == "__main__":
-    main()
+@bot.message_handler(func=lambda m: m.text == 'حساب احتياطي')
+def backup_account_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    msg = bot.send_message(message.chat.id, "ارسل سيشن الحساب الاحتياطي (اختياري):")
+    bot.register_next_step_handler(msg, process_backup_session)
+
+def process_backup_session(message):
+    user_id = message.from_user.id
+    session = user_sessions.get(user_id)
+    
+    if not session:
+        return
+    
+    session.backup_session = message.text.strip()
+    info = get_account_info(session.backup_session)
+    
+    if info:
+        session.backup_info = info
+        bot.send_message(message.chat.id, f"تم حفظ الحساب الاحتياطي: @{info['username']}")
+    else:
+        bot.send_message(message.chat.id, "السيشن غير صحيح، حاول مرة اخرى")
+
+@bot.message_handler(func=lambda m: m.text == 'عدد الثريدات')
+def threads_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    msg = bot.send_message(message.chat.id, "ارسل عدد الثريدات (يفضل 30-50):")
+    bot.register_next_step_handler(msg, process_threads)
+
+def process_threads(message):
+    user_id = message.from_user.id
+    session = user_sessions.get(user_id)
+    
+    if not session:
+        return
+    
+    try:
+        threads = int(message.text.strip())
+        if 20 <= threads <= 80:
+            session.threads = threads
+            bot.send_message(message.chat.id, f"تم تحديد عدد الثريدات: {threads}")
+        else:
+            bot.send_message(message.chat.id, "يجب ان يكون العدد بين 20 و 80")
+    except:
+        bot.send_message(message.chat.id, "ارسل رقم صحيح")
+
+@bot.message_handler(func=lambda m: m.text == 'بدء النقل')
+def start_swap_handler(message):
+    user_id = message.from_user.id
+    
+    if user_id != ADMIN_ID:
+        return
+    
+    session = user_sessions.get(user_id)
+    
+    if not session or not session.main_session or not session.target_session:
+        bot.send_message(message.chat.id, "يجب تحديد الحساب الرئيسي وحساب التارجت اولا")
+        return
+    
+    if session.is_running:
+        bot.send_message(message.chat.id, "عملية نقل جارية بالفعل")
+        return
+    
+    threading.Thread(target=perform_swap, args=(user_id,)).start()
+
+@bot.message_handler(func=lambda m: m.text == 'الاعدادات')
+def settings_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    session = user_sessions.get(message.from_user.id)
+    
+    if not session:
+        return
+    
+    info = f"""الاعدادات الحالية:
+
+الحساب الرئيسي: {'✓' if session.main_session else '✗'}
+حساب التارجت: {'✓' if session.target_session else '✗'}
+حساب احتياطي: {'✓' if session.backup_session else '✗'}
+عدد الثريدات: {session.threads}
+"""
+    bot.send_message(message.chat.id, info)
+
+# ==================== Flask Routes ====================
+@app.route('/')
+def index():
+    return 'Instagram Swapper Bot is Running'
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+
+# ==================== Main ====================
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+def run_bot():
+    print("Bot is starting...")
+    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+
+if __name__ == '__main__':
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    time.sleep(2)
+    print("Starting bot polling...")
+    run_bot()
